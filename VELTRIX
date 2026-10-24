@@ -1,0 +1,217 @@
+
+# ============================================================
+# Project: VELTRIX
+# Description: Lightweight Configuration Validation Toolkit
+# Version: 1.0.0
+# License: MIT
+# ============================================================
+
+# ------------------------- main.py ---------------------------
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+
+class DuplicateKeyError(ValueError):
+    """Raised when a JSON object contains duplicate keys."""
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    """Reject duplicate keys during JSON deserialization."""
+    result = {}
+
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateKeyError(
+                f"Duplicate key detected: '{key}'"
+            )
+        result[key] = value
+
+    return result
+
+
+def load_json(path: Path) -> Any:
+    """Load JSON safely and report readable errors."""
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            return json.load(
+                file,
+                object_pairs_hook=reject_duplicate_keys,
+            )
+    except DuplicateKeyError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Invalid JSON at line {exc.lineno}, "
+            f"column {exc.colno}: {exc.msg}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            "The file is not valid UTF-8 text."
+        ) from exc
+
+
+def validate_config(data: Any) -> list[str]:
+    """Validate the configuration against basic rules."""
+    errors = []
+
+    if not isinstance(data, dict):
+        return ["The root JSON value must be an object."]
+
+    required_fields = ("app_name", "environment", "debug")
+
+    for field in required_fields:
+        if field not in data:
+            errors.append(f"Missing required field: '{field}'")
+
+    if "app_name" in data:
+        if not isinstance(data["app_name"], str):
+            errors.append("'app_name' must be a string.")
+        elif not data["app_name"].strip():
+            errors.append("'app_name' cannot be empty.")
+
+    if "environment" in data:
+        allowed = {"development", "staging", "production"}
+        environment = data["environment"]
+
+        if environment not in allowed:
+            errors.append(
+                "'environment' must be one of: "
+                + ", ".join(sorted(allowed))
+            )
+
+    if "debug" in data and not isinstance(data["debug"], bool):
+        errors.append("'debug' must be a boolean.")
+
+    if (
+        data.get("environment") == "production"
+        and data.get("debug") is True
+    ):
+        errors.append(
+            "Debug mode must be disabled in production."
+        )
+
+    return errors
+
+
+def run_validation(path: Path) -> int:
+    """Validate a configuration file and return an exit code."""
+    if not path.exists():
+        print(f"ERROR: File not found: {path}", file=sys.stderr)
+        return 2
+
+    if not path.is_file():
+        print(f"ERROR: Not a file: {path}", file=sys.stderr)
+        return 2
+
+    try:
+        config = load_json(path)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    errors = validate_config(config)
+
+    if errors:
+        print(f"VALIDATION FAILED: {path}")
+        for index, error in enumerate(errors, start=1):
+            print(f"  {index}. {error}")
+        return 1
+
+    print(f"VALIDATION PASSED: {path}")
+    print(f"Application: {config['app_name']}")
+    print(f"Environment: {config['environment']}")
+    print("Configuration is structurally valid.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="veltrix",
+        description="Validate JSON application configurations.",
+    )
+    parser.add_argument(
+        "file",
+        type=Path,
+        help="Path to the JSON configuration file.",
+    )
+
+    args = parser.parse_args()
+    return run_validation(args.file)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+# --------------------- config.example.json -------------------
+# Save the following as a separate file named config.json:
+#
+# {
+#   "app_name": "AtlasService",
+#   "environment": "development",
+#   "debug": true
+# }
+
+
+# -------------------------- README.md -------------------------
+# Save the following as a separate file named README.md:
+#
+# # VELTRIX
+#
+# A lightweight JSON configuration validation toolkit
+# designed to catch common configuration errors before deployment.
+#
+# ## Features
+#
+# - JSON syntax validation
+# - Duplicate-key detection
+# - Required-field validation
+# - Environment validation
+# - Production debug-mode protection
+# - Clear error messages and automation-friendly exit codes
+# - Python standard library only
+#
+# ## Requirements
+#
+# - Python 3.10 or newer
+#
+# ## Usage
+#
+#     python main.py config.json
+#
+# Successful validation returns exit code 0.
+# Configuration errors return exit code 1.
+# File or parsing errors return exit code 2.
+#
+# ## Example
+#
+#     {
+#       "app_name": "AtlasService",
+#       "environment": "production",
+#       "debug": true
+#     }
+#
+# This configuration fails validation because debug mode
+# is enabled in production.
+#
+# ## License
+#
+# MIT License
+
+
+# ------------------------ .gitignore --------------------------
+# Save the following as a separate file named .gitignore:
+#
+# __pycache__/
+# *.py[cod]
+# .venv/
+# venv/
+# .env
+# .pytest_cache/
+# .coverage
+# dist/
+# build/
